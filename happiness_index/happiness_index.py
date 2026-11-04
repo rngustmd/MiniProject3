@@ -10,6 +10,7 @@ plt.rcParams['axes.unicode_minus'] = False
 raw_life = pd.read_csv('삶의_만족도.csv', encoding='cp949', header=None)
 raw_suicide = pd.read_csv('사망원인별_사망.csv', encoding='cp949', header=None)
 raw_contents = pd.read_csv('콘텐츠_이용률.csv', encoding='cp949', header=None)
+raw_depress = pd.read_csv('우울감_경험률.csv', encoding='cp949', header=None)
 
 # 1. 삶의만족도 전처리
 life_avg = raw_life.iloc[:, 13::12]
@@ -20,21 +21,28 @@ df_life = pd.DataFrame({'연도': life_avg.iloc[0].astype(int).values, '만족�
 
 # 2. 자살률 전처리
 suicide = raw_suicide.iloc[42: ,4::2]
-years = raw_suicide.iloc[0, 4::2]
-df_suicide = pd.DataFrame({'연도': years.astype(int).values,
+suicide_years = raw_suicide.iloc[0, 4::2]
+df_suicide = pd.DataFrame({'연도': suicide_years.astype(int).values,
                            '10_14_사망률': suicide.iloc[0].astype(float).values,
                            '15_19_사망률':suicide.iloc[1].astype(float).values})
 #print(df_suicide)
 
 # 3. 콘텐츠이용률 전처리
-years = raw_contents.iloc[0]               # 연도 줄
+contents_years = raw_contents.iloc[0]               # 연도 줄
 items = raw_contents.iloc[1].str.strip()   # 항목 줄
 
-cond = (items == 'SNS') & (years != '2016') # SNS 항목과 2016년 빼고 다
+cond = (items == 'SNS') & (contents_years != '2016') # SNS 항목과 2016년 빼고 다
 sns = raw_contents.iloc[10, cond]
 
-df_sns = pd.DataFrame({'연도': years[cond].astype(int).values, 'SNS이용률': sns.astype(float).values})
+df_sns = pd.DataFrame({'연도': contents_years[cond].astype(int).values, 'SNS이용률': sns.astype(float).values})
 #print(df_sns)
+
+# 4. 우울감 경험률 전처리
+depress = raw_depress.iloc[2, 4::3]
+depress_years = raw_depress.iloc[0, 4::3]
+pd.DataFrame({'연도':depress_years.astype(int).values, '우울감경험률':depress.astype(float).values})
+print(depress)
+
 
 # merge하기
 df_sns_life = pd.merge(df_sns, df_life, on='연도', how='inner')
