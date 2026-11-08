@@ -434,3 +434,78 @@ print(
     .reindex(["봄", "여름", "가을", "겨울"])
     .round(2)
 )
+
+
+
+# [추가 분석: 고수요일 5% 피크 감축 시나리오]
+# 일 최대 수요 상위 10% 기준
+threshold = df["일최대수요"].quantile(0.9)
+# 고수요일 추출
+high_days = df[df["일최대수요"] >= threshold].copy()
+# 피크 수요 5% 감축 가정
+high_days["목표감축량"] = high_days["일최대수요"] * 0.05
+high_days["감축후피크"] = (
+    high_days["일최대수요"] - high_days["목표감축량"]
+)
+# 계절별 결과
+scenario = high_days.groupby("계절").agg(
+    고수요일수=("날짜", "count"),
+    평균기존피크=("일최대수요", "mean"),
+    평균목표감축량=("목표감축량", "mean"),
+    평균감축후피크=("감축후피크", "mean")
+)
+print(scenario.round(2))
+
+# [추가 분석. 극단값 제거 전후 비교]
+# IQR 기준 극단값 탐지 함수
+def remove_outliers(data, column):
+    Q1 = data[column].quantile(0.25)
+    Q3 = data[column].quantile(0.75)
+    IQR = Q3 - Q1
+    lower = Q1 - 1.5 * IQR
+    upper = Q3 + 1.5 * IQ
+    return data[data[column].between(lower, upper)].copy()
+# H1: 일최대수요 기준 극단값 제외
+df_h1_filtered = remove_outliers(df, "일최대수요")
+# H2: 일중변동폭 기준 극단값 제외
+df_h2_filtered = remove_outliers(df, "일중변동폭")
+
+# 가설별 증가율 계산 함수
+def compare_rate(data, column, season):
+    target = data.loc[data["계절"] == season, column].mean()
+    base = data.loc[data["계절"].isin(["봄", "가을"]), column].mean()
+    return (target / base - 1) * 100
+
+# 결과 비교표
+outlier_result = pd.DataFrame({
+    "분석 항목": ["H1 여름", "H1 겨울", "H2 여름"],
+    "제거 전 증가율(%)": [
+        compare_rate(df, "일최대수요", "여름"),
+        compare_rate(df, "일최대수요", "겨울"),
+        compare_rate(df, "일중변동폭", "여름")
+    ],
+    "제거 후 증가율(%)": [
+        compare_rate(df_h1_filtered, "일최대수요", "여름"),
+        compare_rate(df_h1_filtered, "일최대수요", "겨울"),
+        compare_rate(df_h2_filtered, "일중변동폭", "여름")
+    ]
+})
+outlier_result["변화(%p)"] = (outlier_result["제거 후 증가율(%)"]- outlier_result["제거 전 증가율(%)"])
+print("=== 극단값 제거 전후 결과 비교 ===")
+print(outlier_result.round(2).to_string(index=False))
+print("\nH1 극단값 탐지 일수:",len(df) - len(df_h1_filtered))
+print("H2 극단값 탐지 일수:",len(df) - len(df_h2_filtered))
+
+# H2 증가율 비교 그래프
+plt.figure(figsize=(8, 5))
+values = [outlier_result.loc[2, "제거 전 증가율(%)"],outlier_result.loc[2, "제거 후 증가율(%)"]]
+bars = plt.bar(["극단값 유지", "극단값 제외"],values)
+plt.bar_label(bars, fmt="%.2f%%", padding=3)
+plt.axhline(y=10,linestyle="--",color="red",label="H2 가설 기준 10%")
+plt.title("극단값 제거 전후 H2 증가율 비교")
+plt.xlabel("데이터 처리 방식")
+plt.ylabel("여름철 일중 변동 폭 증가율(%)")
+plt.legend()
+plt.grid(axis="y", alpha=0.3)
+plt.tight_layout()
+plt.show()
