@@ -1,103 +1,145 @@
-"""
-태양광 발전량 CSV 여러 개를 읽어서 pd.concat으로 하나의 DataFrame으로 합치는 코드
-(한국전력거래소_지역별 시간별 태양광 및 풍력 발전량)
+# ============================================================
+# ④ 전력 수요와 태양광 발전량 — 1단계: 데이터 전처리
+# ------------------------------------------------------------
+# 하는 일
+#   1) 태양광 CSV 6개를 읽어서 하나로 합친다 (pd.concat)
+#   2) 전력수요 CSV 3개를 읽어서 하나로 합친다
+#   3) 두 데이터를 날짜 + 시간 기준으로 합친다 (pd.merge)
+#   4) 결과를 '시간별_분석데이터.csv'로 저장한다 → 2단계 코드에서 사용
+#
+# 폴더 구성 (이 .py 파일이 있는 폴더 기준)
+#   이 폴더/
+#   ├─ 1_전처리.py
+#   ├─ 한국전력거래소_시간별 전국 전력수요량_20221231.csv   (2023, 2024도)
+#   └─ solar_data/
+#        └─ 태양광 CSV 6개
+# ============================================================
 
-파일마다 형식이 달라서, 읽을 때 같은 형식으로 맞춘 뒤 concat 합니다.
-  - 2017.01 ~ 2023.11 파일: 가로형  → 태양광 / 풍력이 각각 별도 열
-  - 2023.12 ~ 2024.12 파일: 세로형  → '연료원' 열에 태양광 / 풍력
-  - 열 이름도 조금씩 다름 (지역/지역명, MWh/Mwh, 앞뒤 공백 등)
-
-합친 결과(solar)의 열: 거래일자 | 거래시간 | 지역 | 태양광(MWh)
-  - 지역: 17개 시도 (풍력은 지역 구분이 달라서 제외)
-"""
-import glob
+from pathlib import Path
 import pandas as pd
 
-# ── 설정 ─────────────────────────────────────────────
-DATA_DIR = r"C:\Users\user\Desktop\미니3\MiniProject3\solar\solar_data"               # 태양광 CSV를 모아둔 폴더 (Colab이면 "/content/solar_data")
-START, END = "2022-01-01", "2024-12-31"  # 분석 기간
+# 이 .py 파일이 있는 폴더 (어디서 실행해도 같은 폴더를 찾음)
+BASE_DIR = Path(__file__).resolve().parent
+SOLAR_DIR = BASE_DIR / "solar_data"
+
+# 분석 기간
+START = "2022-01-01"
+END = "2024-12-31"
 
 
-# ── 함수 ─────────────────────────────────────────────
-def read_csv_kr(path):
-    """공공데이터 CSV는 대부분 cp949. 안 되면 utf-8로 다시 시도."""
-    for enc in ("cp949", "utf-8-sig"):
-        try:
-            return pd.read_csv(path, encoding=enc, dtype=str)
-        except UnicodeDecodeError:
-            continue
-    raise ValueError(f"인코딩을 읽을 수 없음: {path}")
+# ============================================================
+# 1. 태양광 파일 읽어서 합치기
+# ============================================================
+# 파일마다 형식이 달라서, 하나씩 읽으면서 같은 모양으로 맞춘다
+#   - 2023년 11월까지: 가로형 (태양광 열, 풍력 열이 따로 있음)
+#   - 2023년 12월부터: 세로형 ('연료원' 열에 태양광/풍력이 적혀 있음)
 
+solar_list = []   # 형식을 맞춘 파일들을 모아둘 리스트
 
-def to_number(s):
-    """'  1,234.5 ' 같은 값을 숫자로 변환.
-    - 앞뒤 공백, 천 단위 쉼표 제거
-    - 빈칸은 0으로 처리 (빈칸은 밤·새벽 시간대 = 거래량 없음)
-    """
-    s = s.astype(str).str.strip().str.replace(",", "", regex=False)
-    s = s.replace({"": None, "nan": None})
-    return pd.to_numeric(s, errors="coerce").fillna(0)
+for path in sorted(SOLAR_DIR.glob("*.csv")):
+    df = pd.read_csv(path, encoding="cp949", dtype=str)   # 일단 모두 글자로 읽기
 
+    # 열 이름 정리: 앞뒤 공백 지우기, '지역명' → '지역'
+    df.columns = df.columns.str.strip()
+    df = df.rename(columns={"지역명": "지역"})
 
-def standardize(df):
-    """파일 하나를 [거래일자, 거래시간, 지역, 태양광(MWh)] 형태로 맞춤."""
-    df.columns = [c.strip() for c in df.columns]
-    region_col = "지역" if "지역" in df.columns else "지역명"
-
-    if "연료원" in df.columns:  # 세로형 (2023.12~)
+    if "연료원" in df.columns:
+        # 세로형: 연료원이 '태양광'인 행만 남기기
         df = df[df["연료원"].str.strip() == "태양광"]
-        value_col = [c for c in df.columns if "mwh" in c.lower()][0]
-    else:                       # 가로형 (~2023.11)
-        value_col = [c for c in df.columns if "태양광" in c][0]
+        value_col = df.columns[4]          # 5번째 열이 발전량
+    else:
+        # 가로형: 이름에 '태양광'이 들어간 열 찾기
+        for col in df.columns:
+            if "태양광" in col:
+                value_col = col
 
-    return pd.DataFrame({
-        "거래일자": pd.to_datetime(df["거래일자"].str.strip()),
-        "거래시간": df["거래시간"].astype(str).str.strip().astype(int),
-        "지역": df[region_col].str.strip(),
-        "태양광(MWh)": to_number(df[value_col]),
-    })
+    # 필요한 4개 열만 남기고 이름 통일
+    df = df[["거래일자", "거래시간", "지역", value_col]]
+    df.columns = ["거래일자", "거래시간", "지역", "태양광"]
+
+    solar_list.append(df)
+    print("읽음:", path.name, len(df), "행")
+
+# 리스트에 모은 파일들을 하나로 합치기
+solar = pd.concat(solar_list, ignore_index=True)
 
 
-# ── 1. 폴더 안 CSV를 모두 읽어서 형식 맞추기 ─────────────
-frames = []
-for path in sorted(glob.glob(f"{DATA_DIR}/*.csv")):
-    raw = read_csv_kr(path)
-    if "거래시간" not in [c.strip() for c in raw.columns]:
-        print("건너뜀 (태양광 파일 아님):", path)
-        continue
-    part = standardize(raw)
-    print(f"{path}: {part['거래일자'].min().date()} ~ {part['거래일자'].max().date()}, {len(part):,}행")
-    frames.append(part)
+# ============================================================
+# 2. 태양광 값 정리하기
+# ============================================================
+# (1) 숫자로 바꾸기: 앞뒤 공백, 쉼표(1,011.69) 제거
+solar["태양광"] = solar["태양광"].str.strip().str.replace(",", "")
+solar["태양광"] = pd.to_numeric(solar["태양광"], errors="coerce")
 
-# ── 2. concat으로 합치고 분석 기간만 남기기 ───────────────
-solar = pd.concat(frames, ignore_index=True)
+# (2) 빈칸은 밤 시간대(거래 없음)라서 0으로 채우기
+solar["태양광"] = solar["태양광"].fillna(0)
+
+# (3) 날짜·시간 형식 바꾸기
+solar["거래일자"] = pd.to_datetime(solar["거래일자"].str.strip())
+solar["거래시간"] = solar["거래시간"].str.strip().astype(int)
+solar["지역"] = solar["지역"].str.strip()
+
+# (4) 분석 기간(2022~2024년)만 남기기
 solar = solar[(solar["거래일자"] >= START) & (solar["거래일자"] <= END)]
 
-dup = solar.duplicated(["거래일자", "거래시간", "지역"]).sum()
-if dup:
-    print(f"주의: 겹치는 행 {dup:,}개 → 먼저 나온 값만 남김")
-    solar = solar.drop_duplicates(["거래일자", "거래시간", "지역"])
+# (5) 점검하기
+print("\n[태양광 점검]")
+print("행 개수:", len(solar), "(정상: 1,096일 × 24시간 × 17개 시도 = 447,168)")
+print("결측값:", solar.isna().sum().sum())
+print("중복 행:", solar.duplicated(["거래일자", "거래시간", "지역"]).sum())
+print("음수 값:", (solar["태양광"] < 0).sum())
 
-solar = solar.sort_values(["거래일자", "거래시간", "지역"]).reset_index(drop=True)
+# (6) 17개 시도를 시간마다 더해서 '전국 합계' 만들기
+solar_nat = solar.groupby(["거래일자", "거래시간"])["태양광"].sum().reset_index()
 
-# ── 3. 빠진 날짜·시간이 없는지 확인 ──────────────────────
-all_days = pd.date_range(START, END)
-missing = all_days.difference(solar["거래일자"].unique())
-per_day = solar.groupby("거래일자").size()
 
-print("\n[점검]")
-print(f"날짜 수: {solar['거래일자'].nunique()} / {len(all_days)}")
-print(f"빠진 날짜: {list(missing.date) if len(missing) else '없음'}")
-print(f"하루 행 수가 408(17개 시도 × 24시간)이 아닌 날: {(per_day != 17 * 24).sum()}일")
-print(f"지역 수: {solar['지역'].nunique()}개")
+# ============================================================
+# 3. 전력수요 파일 읽어서 합치기
+# ============================================================
+demand_list = []
+for path in sorted(BASE_DIR.glob("*전력수요량*.csv")):
+    df = pd.read_csv(path, encoding="cp949")
+    demand_list.append(df)
+    print("읽음:", path.name)
 
-# ── 4. 전국 합계 (수요 데이터와 합칠 때 사용) ─────────────
-# 수요 데이터도 1시~24시 형식이라, 거래일자 + 거래시간 기준으로 merge하면 됩니다.
-solar_nat = (solar.groupby(["거래일자", "거래시간"], as_index=False)["태양광(MWh)"].sum())
+demand = pd.concat(demand_list, ignore_index=True)
+demand = demand.dropna(subset=["날짜"])     # 맨 아래 빈 행이 있으면 지우기
 
-print(f"\n전국 시간별 합계: {len(solar_nat):,}행 (= {len(all_days)}일 × 24시간)")
-print("\n연도별 태양광 합계 (TWh)")
-print((solar_nat.groupby(solar_nat["거래일자"].dt.year)["태양광(MWh)"].sum() / 1e6).round(2))
+# 가로형(날짜 | 1시 | 2시 | ... | 24시) → 세로형(날짜 | 거래시간 | 수요)
+demand = demand.melt(id_vars="날짜", var_name="거래시간", value_name="수요")
 
-# 파일로도 저장하고 싶으면 아래 주석을 해제하세요
-solar.to_csv("태양광_2022_2024_통합.csv", index=False, encoding="utf-8-sig")
+demand["거래일자"] = pd.to_datetime(demand["날짜"])
+demand["거래시간"] = demand["거래시간"].str.replace("시", "").astype(int)   # '13시' → 13
+demand = demand[["거래일자", "거래시간", "수요"]]
+
+print("\n[수요 점검]")
+print("결측값:", demand.isna().sum().sum())
+print("0 이하 값:", (demand["수요"] <= 0).sum())
+print("최솟값:", demand["수요"].min(), "/ 최댓값:", demand["수요"].max())
+
+
+# ============================================================
+# 4. 두 데이터 합치기 + 태양광 비중 계산
+# ============================================================
+# 날짜와 시간이 같은 행끼리 옆으로 붙이기
+df = pd.merge(demand, solar_nat, on=["거래일자", "거래시간"])
+
+# 태양광 비중(%) = 그 시간에 쓴 전기 중 태양광이 채운 몫
+df["비중"] = df["태양광"] / df["수요"] * 100
+
+df = df.sort_values(["거래일자", "거래시간"]).reset_index(drop=True)
+
+print("\n[합친 결과]")
+print("행 개수:", len(df), "(정상: 1,096일 × 24시간 = 26,304)")
+print("결측값:", df.isna().sum().sum())
+
+# 연도별 태양광 합계 (TWh) — 해마다 늘어나는지 확인
+print("\n연도별 태양광 합계(TWh)")
+print((df.groupby(df["거래일자"].dt.year)["태양광"].sum() / 1000000).round(2))
+
+
+# ============================================================
+# 5. 저장하기 → 2단계 코드에서 이 파일을 읽어서 사용
+# ============================================================
+df.to_csv(BASE_DIR / "시간별_분석데이터.csv", index=False, encoding="utf-8-sig")
+print("\n저장 완료: 시간별_분석데이터.csv")
