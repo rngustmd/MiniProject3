@@ -87,13 +87,16 @@ plt.xlabel('구분')
 plt.ylabel('평균 전력 수요 (MWh)')
 plt.show()
 
-# *] 추가 그래프 -> 주일과 쉬는날 시간대별 평균 수요량
-plt.plot(range(9, 19), weekday_mean.values, marker='o', label='평일')
-plt.plot(range(9, 19), holidays_mean.values, marker='o', label='주말,공휴일')
+# *] 추가 그래프 -> 주일과 쉬는날 시간대별 평균 수요량 (막대)
+x = np.arange(9, 19)   # 9 ~ 18
+width = 0.4            # 막대 폭
+
+plt.bar(x - width/2, weekday_mean.values, width, label='평일')
+plt.bar(x + width/2, holidays_mean.values, width, label='주말,공휴일')
 plt.title('평일과 주말,공휴일의 9~18시간대별 평균 전력 수요 (2022~2024)')
 plt.xlabel('시간')
 plt.ylabel('평균 전력 수요 (MWh)')
-plt.xticks(range(9,19))
+plt.xticks(x)
 plt.legend()
 plt.tight_layout()
 plt.show()
