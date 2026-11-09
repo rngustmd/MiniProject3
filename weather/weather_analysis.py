@@ -463,7 +463,7 @@ def remove_outliers(data, column):
     Q3 = data[column].quantile(0.75)
     IQR = Q3 - Q1
     lower = Q1 - 1.5 * IQR
-    upper = Q3 + 1.5 * IQ
+    upper = Q3 + 1.5 * IQR
     return data[data[column].between(lower, upper)].copy()
 # H1: 일최대수요 기준 극단값 제외
 df_h1_filtered = remove_outliers(df, "일최대수요")
